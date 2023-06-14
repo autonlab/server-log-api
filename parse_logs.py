@@ -4,7 +4,6 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-
 def determineAvailableData(src = Path(__file__).parent / 'data', dst: Path = 'available_data.csv'):
     """Writes to local directory a csv enumerating possible log data from which to draw from. Writes it to `dst`, ensure it is a csv path.
 
@@ -85,9 +84,48 @@ def parse_all(src_df : pd.DataFrame, excluded_types: set = set(), dst: str = 'al
     result.to_csv(dst, index=False)
     return result
 
-if __name__=='__main__':
-    determineAvailableData()
-    parse_all(
-        pd.read_csv('available_data.csv', parse_dates=['date']),
-        excluded_types= set(['daemon'])
-    )
+def filter_logs_by_host(csv_file : str, host : str) -> pd.DataFrame:
+    """This function iteratively lazy loads the full server log csv by chunks
+    and filters based on a given host. 
+
+    Args:
+        csv_file (str): The filepath to the full csv file containing all log data.
+        host (str): The host name that you want to filter by.
+
+    Returns:
+        pd.DataFrame: A dataframe only containing logs for the given host.
+    """
+    chunk_size = 10000  # Number of rows to process at a time
+    dataframes = []
+    # Define a generator to lazily read the CSV file in chunks
+    reader = pd.read_csv(csv_file, chunksize=chunk_size)
+
+    # Iterate over the chunks and filter rows by the host column
+    for chunk in reader:
+        filtered_chunk = chunk[chunk['host'] == host]
+        if not filtered_chunk.empty:
+            dataframes.append(filtered_chunk)
+
+    filtered_dataframe = pd.concat(dataframes)
+
+    return filtered_dataframe
+
+def filter_logs_by_timeframe(src_df : pd.DataFrame, start_time : dt.datetime, end_time : dt.datetime) -> pd.DataFrame:
+    """_summary_
+
+    Args:
+        src_df (pd.DataFrame): A dataframe containing the server log data. 
+        start_time (dt.datetime): The start time that you want to filter by.
+        end_time (dt.datetime): The end time that you want to filter by.
+
+    Returns:
+        pd.DataFrame: A filtered dataframe of server log data where each log is between
+                      the start_time and end_time. 
+    """
+    # Convert the datetime column to Python's datetime format
+    src_df['datetime'] = pd.to_datetime(src_df['datetime'])
+
+    # Filter the dataframe based on the time range
+    filtered_dataframe = src_df[(src_df['datetime'] >= start_time) & (src_df['datetime'] <= end_time)]
+
+    return filtered_dataframe
