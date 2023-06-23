@@ -3,12 +3,28 @@ import pandas as pd
 
 def featurize_by_time_interval_log_format_matching(
     filtered_df:pd.DataFrame,
-    src:str='regex_list.txt'
+    t_interval:str='60S',
+    src:str='regex_list.txt',
     )->pd.DataFrame:
+    """Featurizes the log messages for a single host by splitting the data into
+       separate time intervals (determined by t_interval) and counting the number of occurrences
+       of different formats of log messages within those time intervals. 
+
+    Args:
+        filtered_df (pd.DataFrame): A dataframe that contains data from a single host.
+        t_interval (str, optional): The time interval that the data should be split into. Defaults to '60S'.
+        src (str, optional): The file path where the regular expressions are saved,
+                             should be a .txt file. Defaults to 'regex_list.txt'.
+
+    Returns:
+        pd.DataFrame: A dataframe with the interval start times as rows, the regular expressions
+                      as columns, and the number of occurrences of each regular expression within
+                      the time interval as values.
+    """
 
     filtered_df.sort_values('datetime')
     filtered_df.set_index('datetime', inplace=True)
-    resampled_df = filtered_df['content'].resample('60S')
+    resampled_df = filtered_df['content'].resample(t_interval)
     regex_list = load_regex_list(src)
     counts_per_time_interval = {}
     # Loop through the log messages in each time interval
@@ -24,7 +40,7 @@ def featurize_by_time_interval_log_format_matching(
 
     result_df = pd.DataFrame.from_dict(counts_per_time_interval, orient='index')
     result_df.columns = regex_list
-    
+
     return result_df
 
 def build_and_save_regex_list(
