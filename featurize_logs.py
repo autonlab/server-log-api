@@ -23,7 +23,8 @@ def featurize_by_time_interval_log_format_matching(
         counts_per_time_interval[interval_start] = counts
 
     result_df = pd.DataFrame.from_dict(counts_per_time_interval, orient='index')
-
+    result_df.columns = regex_list
+    
     return result_df
 
 def build_and_save_regex_list(
