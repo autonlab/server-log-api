@@ -4,8 +4,12 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-def determineAvailableData(src = Path(__file__).parent / 'data', dst: Path = 'available_data.csv'):
-    """Writes to local directory a csv enumerating possible log data from which to draw from. Writes it to `dst`, ensure it is a csv path.
+def determineAvailableData(
+    src = Path(__file__).parent / 'data', 
+    dst: Path = 'available_data.csv'
+    ):
+    """Writes to local directory a csv enumerating possible log data from which to draw from. 
+       Writes it to `dst`, ensure it is a csv path.
 
     Args:
         src (_type_, optional): _description_. Defaults to Path(__file__).parent/'data'.
@@ -37,11 +41,20 @@ def determineAvailableData(src = Path(__file__).parent / 'data', dst: Path = 'av
     })
     res.to_csv(dst, index=False)
 
-def parse_all(src_df : pd.DataFrame, excluded_types: set = set(), dst: str = 'all_data_content_extracted.csv'):
+def parse_all(
+    src_df : pd.DataFrame, 
+    excluded_types: set = set(), 
+    dst: str = 'all_data_content_extracted.csv'
+    )->pd.DataFrame:
     """Return dataframe containing all messages in the form `datetime,host,type,content`
 
     Args:
-        src_df (pd.DataFrame): containing columns `host,date,log_type`
+        src_df (pd.DataFrame): A dataframe containing columns `host,date,log_type`
+        excluded_types (set): A set of log types to exclude. Defaults to an empty set.
+        dst (str): The file path that the output shoould be saved to. Defaults to 'all_data_content_extracted.csv'.
+    
+    Returns:
+        pd.DataFrame: A dataframe containing all messages in the form `datetime,host,type,content`.
     """
     res_dict = {
         'datetime': list(),
@@ -76,21 +89,31 @@ def parse_all(src_df : pd.DataFrame, excluded_types: set = set(), dst: str = 'al
                 continue
             parsed_dt = parsed_dt.replace(year=date.year)
 
+            # Find the ending index of the host name in the content
+            start_index = content.index(' ') + 1
+
             res_dict['datetime'].append(parsed_dt)
             res_dict['host'].append(host)
             res_dict['type'].append(type)
-            res_dict['content'].append(content)
+            # Don't include the hostname in the content
+            res_dict['content'].append(content[start_index:])
+            
     result = pd.DataFrame(res_dict)
     result.to_csv(dst, index=False)
     return result
 
-def filter_logs_by_host(csv_file : str, host : str) -> pd.DataFrame:
+def filter_logs_by_host(
+    csv_file:str, 
+    host:str,
+    chunk_size:int=10000
+    )->pd.DataFrame:
     """This function iteratively lazy loads the full server log csv by chunks
     and filters based on a given host. 
 
     Args:
         csv_file (str): The filepath to the full csv file containing all log data.
         host (str): The host name that you want to filter by.
+        chunk_size (int): The size of the chunks to load iteratively. Defaults to 10000.
 
     Returns:
         pd.DataFrame: A dataframe only containing logs for the given host.
@@ -105,12 +128,17 @@ def filter_logs_by_host(csv_file : str, host : str) -> pd.DataFrame:
         filtered_chunk = chunk[chunk['host'] == host]
         if not filtered_chunk.empty:
             dataframes.append(filtered_chunk)
-
+    
+    # Build the full dataframe
     filtered_dataframe = pd.concat(dataframes)
 
     return filtered_dataframe
 
-def filter_logs_by_timeframe(src_df : pd.DataFrame, start_time : dt.datetime, end_time : dt.datetime) -> pd.DataFrame:
+def filter_logs_by_timeframe(
+    src_df:pd.DataFrame, 
+    start_time:dt.datetime, 
+    end_time:dt.datetime
+    )->pd.DataFrame:
     """_summary_
 
     Args:
