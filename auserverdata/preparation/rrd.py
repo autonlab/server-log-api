@@ -8,6 +8,7 @@ import datetime as dt
 import rrdtool
 import pandas as pd
 import matplotlib.pyplot as plt
+from joblib import Parallel,delayed
 
 def check_none(
     rows
@@ -75,7 +76,8 @@ def get_min_and_max_date(
 
 def parse_rrds_for_all_snmp_servers(
     snmp_path:str,
-    dst:str=None
+    dst:str=None,
+    n_jobs:int=-1
     )->pd.DataFrame:
     """Parses all available SNMP servers' RRDs and
        stores the data in a single dataframe with columns
@@ -87,30 +89,31 @@ def parse_rrds_for_all_snmp_servers(
                          directories should then contain RRD files.
         dst (str, .csv, optional): The file path where the resulting dataframe
                                    should be stored. Defaults to None.
+        n_jobs (int, optional): The maximum number of concurrently running jobs to use
+                                when calling Parallel. Defaults to -1, which uses all
+                                CPUs.
 
     Returns:
         pd.DataFrame: A dataframe with columns
                       for server, rrd, data_source, time, and value.
     """
-    # Indicates which RRA to use
-    rrd_idx = 1
 
-    result = {
-        'server': [],
-        'rrd': [],
-        'data_source': [],
-        'time': [],
-        'value':[]
-    }
+    def helper(snmp_server_path):
 
-    # Iterate through the SNMP directories
-    for snmp_server in os.listdir(snmp_path):
-
-        snmp_server_path = snmp_path + f'/{snmp_server}'
+        # Indicates which RRA to use
+        rrd_idx = 1
 
         # Excludes poller-wrapper_count.rrd and poller-wrapper.rrd
         if not os.path.isdir(snmp_server_path):
-            break
+            return None
+
+        result = {
+            'server': [],
+            'rrd': [],
+            'data_source': [],
+            'time': [],
+            'value':[]
+        }
 
         for file_path in os.listdir(snmp_server_path):
             rrd = os.path.join(snmp_server_path, file_path)
@@ -144,17 +147,29 @@ def parse_rrds_for_all_snmp_servers(
                     for k, row in enumerate(rows):
                         for j, value in enumerate(row):
                             time = start_time_stamp + dt.timedelta(seconds=step)*k
-                            result['server'].append(snmp_server.replace('.int.autonlab.org',''))
+                            result['server'].append(Path(snmp_server_path).name.replace('.int.autonlab.org',''))
                             result['rrd'].append(Path(rrd).name.replace('.rrd', ''))
                             result['data_source'].append(data_sources[j])
                             result['time'].append(time)
                             result['value'].append(value)
-        print(f'Finished parsing {snmp_server}...')
 
-    result = pd.DataFrame(result)
+        print(f"Finished parsing {Path(snmp_server_path).name.replace('.int.autonlab.org','')}...")
+        return result
+
+    snmp_path = '/home/bshook/Projects/server-log-api/rrd/original/snmp'
+    dst = f'/home/bshook/Projects/server-log-api/rrd/parsed/snmp_parsed_data.csv'
+
+    results = Parallel(n_jobs=-1)(
+                delayed(helper)(
+                    snmp_path + f'/{snmp_server}'
+                ) for snmp_server in os.listdir(snmp_path))
+
+    results = pd.DataFrame([i for i in results if i is not None])
+    results = results.apply(pd.Series.explode)
+    results = results.reset_index(drop=True)
     if dst is not None:
-        result.to_csv(dst, index=False)
-    return result
+        results.to_csv(dst, index=False)
+    return results
 
 def parse_rrd_files_for_snmp_server(
     snmp_server_path:str,
