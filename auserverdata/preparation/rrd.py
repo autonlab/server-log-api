@@ -3,8 +3,10 @@ Lorem
 """
 import os
 import sys
+from pathlib import Path
 import datetime as dt
 import rrdtool
+import pandas as pd
 import matplotlib.pyplot as plt
 
 def check_none(
@@ -50,10 +52,10 @@ def get_min_and_max_date(
     min_start_date, max_start_date = sys.maxsize, 0
 
     for file_path in os.listdir(dir_path):
-        file_name = os.path.join(dir_path, file_path)
+        rrd = os.path.join(dir_path, file_path)
 
-        if file_name.endswith("rrd"):
-            info = rrdtool.info(file_name)
+        if rrd.endswith("rrd"):
+            info = rrdtool.info(rrd)
             end_num = info['last_update']
 
             rra = f"rra[{i}]"
@@ -71,65 +73,169 @@ def get_min_and_max_date(
 
     return dt.datetime.utcfromtimestamp(min_start_date), dt.datetime.utcfromtimestamp(max_start_date)
 
-def get_data_from_snmp_server_rrd_files(
-    i:int,
-    step:int,
-    snmp_server_path:str
-    )->tuple[set,dict,list,dict,int]:
-    """Extracts data from RRD files within the given
-       colllectd_server_path directory.
+def parse_rrds_for_all_snmp_servers(
+    snmp_path:str,
+    dst:str=None
+    )->pd.DataFrame:
+    """Parses all available SNMP servers' RRDs and
+       stores the data in a single dataframe with columns
+       for server, rrd, data_source, time, and value.
 
     Args:
-        i (int): _description_
-        step (_type_): _description_
-        snmp_server_path (str): _description_
+        snmp_path (str): The path to the SNMP directoy. That directory
+                         should contain directories for different servers. Those
+                         directories should then contain RRD files.
+        dst (str, .csv, optional): The file path where the resulting dataframe
+                                   should be stored. Defaults to None.
 
     Returns:
-        tuple[set,dict,list,dict,int]: _description_
+        pd.DataFrame: A dataframe with columns
+                      for server, rrd, data_source, time, and value.
     """
-    file_list = set()
-    value_dict = {}
-    garbage_files = []
-    date_dict = {}
-    ret_step = 0
+    # Indicates which RRA to use
+    rrd_idx = 1
+
+    result = {
+        'server': [],
+        'rrd': [],
+        'data_source': [],
+        'time': [],
+        'value':[]
+    }
+
+    # Iterate through the SNMP directories
+    for snmp_server in os.listdir(snmp_path):
+
+        snmp_server_path = snmp_path + f'/{snmp_server}'
+
+        # Excludes poller-wrapper_count.rrd and poller-wrapper.rrd
+        if not os.path.isdir(snmp_server_path):
+            break
+
+        for file_path in os.listdir(snmp_server_path):
+            rrd = os.path.join(snmp_server_path, file_path)
+
+            # Check if the file is an rrd file
+            if rrd.endswith("rrd"):
+                # Get header information about the RRD
+                info = rrdtool.info(rrd)
+
+                # Only get CDPs from a single RRA
+                rra = f"rra[{rrd_idx}]"
+                step = info['step']
+                end_num = info['last_update']
+                n_rows = info[rra+'.rows']
+                n_pdp_per_row = info[rra+'.pdp_per_row']
+                time_balance = (step * n_rows * n_pdp_per_row)
+                start_num = end_num - time_balance
+                start_time_stamp = dt.datetime.utcfromtimestamp(start_num)
+
+                # Get averaged data between start_num and end_num
+                rrd_data = rrdtool.fetch(rrd, "AVERAGE", '-s', str(start_num),'-e', str(end_num))
+
+                data_sources = rrd_data[1]
+
+                # rows will be a list of n_rows tuples. Each tuple contains 4 values
+                # corresponding to read, written, reads, writes.
+                rows = rrd_data[2]
+
+                # Store the rrd timeframe and values
+                if rows:
+                    for k, row in enumerate(rows):
+                        for j, value in enumerate(row):
+                            time = start_time_stamp + dt.timedelta(seconds=step)*k
+                            result['server'].append(snmp_server.replace('.int.autonlab.org',''))
+                            result['rrd'].append(Path(rrd).name.replace('.rrd', ''))
+                            result['data_source'].append(data_sources[j])
+                            result['time'].append(time)
+                            result['value'].append(value)
+        print(f'Finished parsing {snmp_server}...')
+
+    result = pd.DataFrame(result)
+    if dst is not None:
+        result.to_csv(dst, index=False)
+    return result
+
+def parse_rrd_files_for_snmp_server(
+    snmp_server_path:str,
+    dst:str=None
+    )->pd.DataFrame:
+    """Parses a single SNMP server's RRDs and
+       stores the data in a single dataframe with columns
+       for server, rrd, data_source, time, and value.
+
+    Args:
+        snmp_server_path (str): The path to the SNMP server directoy. The
+                                directory should contain RRD files.
+        dst (str, .csv, optional): The file path where the resulting dataframe
+                                   should be stored. Defaults to None.
+
+    Returns:
+        pd.DataFrame: A dataframe with columns
+                      for server, rrd, data_source, time, and value.
+    """
+
+    rrd_idx = 1
+    snmp_server = Path(snmp_server_path).name
 
     # Iterate through snmp files
+    result = {
+        'server': [],
+        'rrd': [],
+        'data_source': [],
+        'time': [],
+        'value':[]
+    }
     for file_path in os.listdir(snmp_server_path):
-
-        file_name = os.path.join(snmp_server_path, file_path)
-
-        # Split the file_name by hyphens, and join the splits except the last one
-        # For example, if file_name = perf-pollermodule-applications,
-        # then comp = perf-pollermodule
-        comp = '-'.join(file_path.split('-')[:-1])
-        file_list.add(comp)
+        rrd = os.path.join(snmp_server_path, file_path)
 
         # Check if the file is an rrd file
-        if file_name.endswith("rrd"):
-            # Get information about the RRD
-            info = rrdtool.info(file_name)
-            rra = f"rra[{i}]"
+        if rrd.endswith("rrd"):
+            # Get header information about the RRD
+            info = rrdtool.info(rrd)
+
+            # Only get CDPs from a single RRA
+            rra = f"rra[{rrd_idx}]"
+            step = info['step']
             end_num = info['last_update']
-            num_rows = info[rra+'.rows']
-            num_pdp_rows = info[rra+'.pdp_per_row']
-            ret_step = 300 * int(num_pdp_rows)
-            time_balance = (step * num_rows * num_pdp_rows)
+            n_rows = info[rra+'.rows']
+            n_pdp_per_row = info[rra+'.pdp_per_row']
+            time_balance = (step * n_rows * n_pdp_per_row)
             start_num = end_num - time_balance
             start_time_stamp = dt.datetime.utcfromtimestamp(start_num)
-            end_time_stamp = dt.datetime.utcfromtimestamp(end_num)
 
             # Get averaged data between start_num and end_num
-            getrrd = rrdtool.fetch(file_name, "AVERAGE", '-s', str(start_num),'-e', str(end_num))
-            row = getrrd[2]
+            rrd_data = rrdtool.fetch(rrd, "AVERAGE", '-s', str(start_num),'-e', str(end_num))
+
+            data_sources = rrd_data[1]
+
+            # rows will be a list of n_rows tuples. Each tuple contains 4 values
+            # corresponding to read, written, reads, writes.
+            rows = rrd_data[2]
 
             # Store the rrd timeframe and values
-            if row:
-                value_dict[file_path] = row
-                date_dict[file_path] = (start_time_stamp, end_time_stamp)
-            else:
-                garbage_files.append(file_path)
+            if rows:
+                for k, row in enumerate(rows):
+                    for j, value in enumerate(row):
+                        time = start_time_stamp + dt.timedelta(seconds=step)*k
+                        result['server'].append(snmp_server.replace('.int.autonlab.org',''))
+                        result['rrd'].append(Path(rrd).name.replace('.rrd', ''))
+                        result['data_source'].append(data_sources[j])
+                        result['time'].append(time)
+                        result['value'].append(value)
 
-    return file_list, value_dict, garbage_files, date_dict, ret_step
+    result = pd.DataFrame(result)
+    if dst is not None:
+        result.to_csv(dst, index=False)
+    return result
+
+def get_time_series_df_for_single_rrd(
+    server_path,
+    rrd
+    ):
+    result = pd.read_csv(server_path + '/parsed_data.csv')
+    pivoted_df = result[result['rrd'] == rrd].pivot(index='time', columns='data_source', values='value')
+    return pivoted_df
 
 def get_data_from_collectd_server_rrd_files(
     i:int,
@@ -161,18 +267,18 @@ def get_data_from_collectd_server_rrd_files(
         # Iterate through each file within the component_directory
         for file_path in os.listdir(dir_name):
 
-            file_name = os.path.join(dir_name, file_path)
+            rrd = os.path.join(dir_name, file_path)
 
-            # Split the file_name by hyphens, and join the splits except the last one
-            # For example, if file_name = perf-pollermodule-applications,
+            # Split the rrd by hyphens, and join the splits except the last one
+            # For example, if rrd = perf-pollermodule-applications,
             # then comp = perf-pollermodule
             comp = ''.join(file_path.split('.')[:-1])
             file_list.add(comp)
 
             # Check if the file is an RRD file
-            if file_name.endswith("rrd"):
+            if rrd.endswith("rrd"):
                 # Get information about the RRD
-                info = rrdtool.info(file_name)
+                info = rrdtool.info(rrd)
                 rra = f"rra[{i}]"
 
                 end_num = info['last_update']
@@ -183,7 +289,7 @@ def get_data_from_collectd_server_rrd_files(
                 start_num = end_num - time_balance
                 start_time_stamp = dt.datetime.utcfromtimestamp(start_num)
                 end_time_stamp = dt.datetime.utcfromtimestamp(end_num)
-                getrrd = rrdtool.fetch(file_name, "AVERAGE", '-s', str(start_num),'-e', str(end_num))
+                getrrd = rrdtool.fetch(rrd, "AVERAGE", '-s', str(start_num),'-e', str(end_num))
                 row = getrrd[2]
 
                 # Store the rrd timeframe and values
