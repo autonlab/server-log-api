@@ -1,0 +1,10 @@
+*.gz
+*.txt
+!/**/
+!*.*
+rrd_samples/
+log_messages/
+rrd/
+h5s/
+*.csv
+*.pyc
