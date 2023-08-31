@@ -10,46 +10,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from joblib import Parallel,delayed
-
-def get_min_and_max_date(
-    i:int,
-    step:int,
-    dir_path:str
-    )->tuple[dt.datetime,dt.datetime]:
-    """Retrieves the earliest and latest date and times across all files.
-
-    Args:
-        i (int): _description_
-        step (int): _description_
-        dir_path (str): _description_
-
-    Returns:
-        tuple[datetime.datetime,datetime.datetime]: _description_
-    """
-    # Function to get the earliest and latest date and times across all files
-    min_start_date, max_start_date = sys.maxsize, 0
-
-    for file_path in os.listdir(dir_path):
-        rrd = os.path.join(dir_path, file_path)
-
-        if rrd.endswith("rrd"):
-            info = rrdtool.info(rrd)
-            end_num = info['last_update']
-
-            rra = f"rra[{i}]"
-            num_rows = info[rra+'.rows']
-            num_pdp_rows = info[rra+'.pdp_per_row']
-            ret_step = 300 * int(num_pdp_rows)
-
-            time_balance = (step * num_rows * num_pdp_rows)
-            start_num = end_num - time_balance
-            if start_num < min_start_date:
-                min_start_date = start_num
-
-            if end_num > max_start_date:
-                max_start_date = end_num
-
-    return dt.datetime.utcfromtimestamp(min_start_date), dt.datetime.utcfromtimestamp(max_start_date)
+import pyarrow.parquet as pq
 
 def get_data_from_rrd(
     rrd:str,
@@ -171,7 +132,7 @@ def parse_rrds_for_all_snmp_servers(
     results = results.apply(pd.Series.explode)
     results = results.reset_index(drop=True)
     if dst is not None:
-        results.to_csv(dst, index=False)
+        results.to_parquet(dst, index=False)
     return results
 
 def parse_rrds_for_all_collectd_servers(
@@ -261,158 +222,94 @@ def parse_rrds_for_all_collectd_servers(
     results = results.apply(pd.Series.explode)
     results = results.reset_index(drop=True)
     if dst is not None:
-        results.to_csv(dst, index=False)
+        results.to_parquet(dst, index=False)
     return results
 
-def parse_rrd_files_for_snmp_server(
-    snmp_server_path:str,
-    dst:str=None
-    )->pd.DataFrame:
-    """Parses a single SNMP server's RRDs and
-       stores the data in a single dataframe with columns
-       for server, rrd, data_source, time, and value.
+def get_available_snmp_server_names(
+    rrd_dir:str
+    )->list[str]:
+    """Retrieves the names of available snmp servers.
 
     Args:
-        snmp_server_path (str): The path to the SNMP server directoy. The
-                                directory should contain RRD files.
-        dst (str, .csv, optional): The file path where the resulting dataframe
-                                   should be stored. Defaults to None.
+        rrd_dir (str): The path to the rrd directoy.
+        server (str): The name of the snmp server that the data should be retrieved from.
 
     Returns:
-        pd.DataFrame: A dataframe with columns
-                      for server, rrd, data_source, time, and value.
+        list[str]: A list containing the available snmp servers.
     """
-
-    rrd_idx = 1
-    snmp_server = Path(snmp_server_path).name
-
-    # Iterate through snmp files
-    result = {
-        'server': [],
-        'rrd': [],
-        'data_source': [],
-        'time': [],
-        'value':[]
-    }
-    for file_path in os.listdir(snmp_server_path):
-        rrd = os.path.join(snmp_server_path, file_path)
-
-        # Check if the file is an rrd file
-        if rrd.endswith("rrd"):
-            # Get header information about the RRD
-            info = rrdtool.info(rrd)
-
-            # Only get CDPs from a single RRA
-            rra = f"rra[{rrd_idx}]"
-            step = info['step']
-            end_num = info['last_update']
-            n_rows = info[rra+'.rows']
-            n_pdp_per_row = info[rra+'.pdp_per_row']
-            time_balance = (step * n_rows * n_pdp_per_row)
-            start_num = end_num - time_balance
-            start_time_stamp = dt.datetime.utcfromtimestamp(start_num)
-
-            # Get averaged data between start_num and end_num
-            rrd_data = rrdtool.fetch(rrd, "AVERAGE", '-s', str(start_num),'-e', str(end_num))
-
-            data_sources = rrd_data[1]
-
-            # rows will be a list of n_rows tuples. Each tuple contains 4 values
-            # corresponding to read, written, reads, writes.
-            rows = rrd_data[2]
-
-            # Store the rrd timeframe and values
-            if rows:
-                for k, row in enumerate(rows):
-                    for j, value in enumerate(row):
-                        time = start_time_stamp + dt.timedelta(seconds=step)*k
-                        result['server'].append(snmp_server.replace('.int.autonlab.org',''))
-                        result['rrd'].append(Path(rrd).name.replace('.rrd', ''))
-                        result['data_source'].append(data_sources[j])
-                        result['time'].append(time)
-                        result['value'].append(value)
-
-    result = pd.DataFrame(result)
-    if dst is not None:
-        result.to_csv(dst, index=False)
-    return result
-
-def get_available_rrd_names_for_snmp_server(
-    rrd_path:str,
-    server:str
-    )->np.array:
-    """Retrieves the names of available RRDs for an snmp server.
-
-    Args:
-        rrd_path (str): The path to the rrd directoy.
-        server (str): The name of the server that the data should be retrieved from.
-
-    Returns:
-        np.array: An array containing the available RRDs for the server.
-    """
-    parsed_rrd = pd.read_csv(rrd_path + '/parsed/snmp/parsed_data.csv')
-    return parsed_rrd[parsed_rrd['server'] == server]['rrd'].unique()
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/snmp/parsed_data.parquet', columns=['server']).to_pandas()
+    return list(parsed_rrd['server'].unique())
 
 def get_available_collectd_server_names(
-    rrd_path:str,
-    parsed_rrd:pd.DataFrame=None
-    )->np.array:
+    rrd_dir:str
+    )->list[str]:
     """Retrieves the names of available collectd servers.
 
     Args:
-        rrd_path (str): The path to the rrd directoy.
+        rrd_dir (str): The path to the rrd directoy.
         server (str): The name of the collectd server that the data should be retrieved from.
 
     Returns:
-        np.array: An array containing the available components for the collectd server.
+        list[str]: A list containing the available collectd servers.
     """
-    if parsed_rrd is None:
-        parsed_rrd = pd.read_csv(rrd_path + '/parsed/collectd/parsed_data.csv')
-    available_servers = list(parsed_rrd['server'].unique())
-    return available_servers
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', columns=['server']).to_pandas()
+    return list(parsed_rrd['server'].unique())
 
 def get_available_component_names_for_collectd_server(
-    rrd_path:str,
-    collectd_server:str,
-    parsed_rrd:pd.DataFrame=None
+    rrd_dir:str,
+    collectd_server:str
     )->np.array:
     """Retrieves the names of available components for a collectd server.
 
     Args:
-        rrd_path (str): The path to the rrd directoy.
+        rrd_dir (str): The path to the rrd directoy.
         server (str): The name of the collectd server that the data should be retrieved from.
 
     Returns:
         np.array: An array containing the available components for the collectd server.
     """
-    if parsed_rrd is None:
-        parsed_rrd = pd.read_csv(rrd_path + '/parsed/collectd/parsed_data.csv')
-    available_components_for_server = list(parsed_rrd[parsed_rrd['server'] == collectd_server]['component'].unique())
-    return available_components_for_server
+    condition = ('server','=',collectd_server)
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', filters=[condition], columns=['component']).to_pandas()
+    return list(parsed_rrd['component'].unique())
+
+def get_available_rrd_names_for_snmp_server(
+    rrd_dir:str,
+    snmp_server:str
+    )->np.array:
+    """Retrieves the names of available RRDs for an snmp server.
+
+    Args:
+        rrd_dir (str): The path to the rrd directoy.
+        snmp_server (str): The name of the server that the data should be retrieved from.
+
+    Returns:
+        np.array: An array containing the available RRDs for the server.
+    """
+    condition = ('server','=',snmp_server)
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/snmp/parsed_data.parquet', filters=[condition], columns=['rrd']).to_pandas()
+    return parsed_rrd['rrd'].unique()
 
 def get_available_rrd_names_for_collectd_server_component(
-    rrd_path:str,
+    rrd_dir:str,
     collectd_server:str,
-    component:str,
-    parsed_rrd:pd.DataFrame=None
+    component:str
     )->np.array:
     """Retrieves the names of available RRDs for a collectd server's component.
 
     Args:
-        rrd_path (str): The path to the rrd directoy.
+        rrd_dir (str): The path to the rrd directoy.
         server (str): The name of the server that the data should be retrieved from.
         component (str): The name of the server's component that the data should be retrieved from.
 
     Returns:
         np.array: An array containing the available RRDs for the collectd server's component.
     """
-    if parsed_rrd is None:
-        parsed_rrd = pd.read_csv(rrd_path + '/parsed/snmp/parsed_data.csv')
-    available_rrds_for_server_component = list(parsed_rrd[(parsed_rrd['server'] == collectd_server) & (parsed_rrd['component'] == component)]['rrd'].unique())
-    return available_rrds_for_server_component
+    condition = [('server','=',collectd_server),('component','=',component)]
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', filters=[condition], columns=['rrd']).to_pandas()
+    return list(parsed_rrd['rrd'].unique())
 
 def get_time_series_data_for_snmp_server(
-    rrd_path:str,
+    rrd_dir:str,
     snmp_server:str
     )->pd.DataFrame:
     """Builds a dataframe of time series data where
@@ -420,7 +317,7 @@ def get_time_series_data_for_snmp_server(
        the data sources contained in the  snmp server's RRDs.
 
     Args:
-        rrd_path (str): The path to the rrd directoy.
+        rrd_dir (str): The path to the rrd directoy.
         snmp_server (str): The name of the snmp server that the data should be retrieved from.
 
     Returns:
@@ -428,12 +325,13 @@ def get_time_series_data_for_snmp_server(
                       indices are timestamps and columns are
                       the data sources contained in the RRD.
     """
-    parsed_rrd = pd.read_csv(rrd_path + '/parsed/snmp/parsed_data.csv')
-    pivoted_df = parsed_rrd[parsed_rrd['server'] == snmp_server].pivot(index='time', columns=['rrd', 'data_source'], values='value')
-    return pivoted_df
+    condition = ('server','=',snmp_server)
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/snmp/parsed_data.parquet', filters=[condition], columns=['rrd', 'data_source', 'time', 'value']).to_pandas()
+    parsed_rrd = parsed_rrd.pivot(index='time', columns=['rrd', 'data_source'], values='value')
+    return parsed_rrd
 
 def get_time_series_data_for_collectd_server(
-    rrd_path:str,
+    rrd_dir:str,
     collectd_server:str
     )->pd.DataFrame:
     """Builds a dataframe of time series data where
@@ -441,7 +339,7 @@ def get_time_series_data_for_collectd_server(
        the data sources contained in the collectd server's RRDs.
 
     Args:
-        rrd_path (str): The path to the rrd directoy.
+        rrd_dir (str): The path to the rrd directoy.
         snmp_server (str): The name of the collectd server that the data should be retrieved from.
 
     Returns:
@@ -449,25 +347,25 @@ def get_time_series_data_for_collectd_server(
                       indices are timestamps and columns are
                       the data sources contained in the collectd server's RRDs.
     """
-    parsed_rrd = pd.read_csv(rrd_path + '/parsed/collectd/parsed_data.csv')
-    pivoted_df = parsed_rrd[parsed_rrd['server'] == collectd_server].pivot(index='time', columns=['component', 'rrd', 'data_source'], values='value')
-    return pivoted_df
+    condition = ('server','=',collectd_server)
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', filters=[condition], columns=['component','rrd','data_source','time','value']).to_pandas()
+    parsed_rrd = parsed_rrd.pivot(index='time', columns=['component','rrd','data_source'], values='value')
+    return parsed_rrd
 
 def get_number_of_features_for_each_snmp_server(
-    rrd_path:str,
-    parsed_rrd
+    rrd_dir:str
     )->pd.DataFrame:
     """Retrieves the number of features per server.
 
     Args:
-        rrd_path (str): The path to the rrd directoy.
+        rrd_dir (str): The path to the rrd directoy.
         monitor (str): The type of monitoring system that the data
                        was gathered by. Options are snmp or collectd.
 
     Returns:
         pd.DataFrame: A dataframe mapping servers to their number of features.
     """
-    parsed_rrd = pd.read_csv(rrd_path + '/parsed/snmp/parsed_data.csv')
+    parsed_rrd = pd.read_parquet(rrd_dir + '/parsed/snmp/parsed_data.parquet')
 
     n_features_per_server = {}
     for server in parsed_rrd['server'].unique():
@@ -475,25 +373,23 @@ def get_number_of_features_for_each_snmp_server(
         n_features_per_server[server] = n_features
 
     n_features_per_server_df = pd.DataFrame.from_dict(n_features_per_server, orient='index', columns=['n_features'])
-    n_features_per_server_df.to_csv(rrd_path + '/parsed/snmp/n_features_per_server.csv')
+    n_features_per_server_df.to_csv(rrd_dir + '/parsed/snmp/n_features_per_server.csv')
     return n_features_per_server_df
 
 def get_number_of_features_for_each_collectd_server(
-    rrd_path:str,
-    parsed_rrd:pd.DataFrame=None
+    rrd_dir:str
     )->pd.DataFrame:
     """Retrieves the number of features per server.
 
     Args:
-        rrd_path (str): The path to the rrd directoy.
+        rrd_dir (str): The path to the rrd directoy.
         monitor (str): The type of monitoring system that the data
                        was gathered by. Options are snmp or collectd.
 
     Returns:
         pd.DataFrame: A dataframe mapping servers to their number of features.
     """
-    if parsed_rrd is None:
-        parsed_rrd = pd.read_csv(rrd_path + '/parsed/collectd/parsed_data.csv')
+    parsed_rrd = pd.read_parquet(rrd_dir + '/parsed/collectd/parsed_data.parquet')
 
     n_features_per_server = {}
     for server in parsed_rrd['server'].unique():
@@ -501,71 +397,5 @@ def get_number_of_features_for_each_collectd_server(
         n_features_per_server[server] = n_features
 
     n_features_per_server_df = pd.DataFrame.from_dict(n_features_per_server, orient='index', columns=['n_features'])
-    n_features_per_server_df.to_csv(rrd_path + '/parsed/collectd/n_features_per_server.csv')
+    n_features_per_server_df.to_csv(rrd_dir + '/parsed/collectd/n_features_per_server.csv')
     return n_features_per_server_df
-
-def select_rrd_data_by_snmp_server(
-    rrd_path:str,
-    servers:list[str],
-    lazy_load:bool=False,
-    chunk_size:int=10000,
-    parsed_rrd:pd.DataFrame=None
-    )->pd.DataFrame:
-    """Filters the parsed data by server so that the resulting
-       dataframe contains data from a single server's RRDs.
-
-    Args:
-        rrd_path (str): The path to the rrd directoy.
-        server (list[str]): A list of the servers that the data should be retrieved from.
-        lazy_load (bool, optional): A boolean indicating whether to perform a lazy load.
-                                    The lazy load will load the parsed data by chunks and
-                                    filter each chunk, this is ideal when RAM is limited.
-                                    Defaults to False.
-        chunk_size (int, optional): The number of rows to load at a time. Defaults to 10000.
-
-    Returns:
-        pd.DataFrame: A dataframe containing data from a single server's RRDs.
-                      There are four columns: server, rrd, time, and value.
-    """
-    if parsed_rrd is None:
-        if lazy_load:
-            dataframes = []
-            # Define a generator to lazily read the CSV file in chunks
-            reader = pd.read_csv(rrd_path + '/parsed/snmp_parsed_data.csv', chunksize=chunk_size)
-
-            # Iterate over the chunks and filter rows by the server column
-            for chunk in reader:
-                filtered_chunk = chunk[chunk['server'].isin(servers)]
-                if not filtered_chunk.empty:
-                    dataframes.append(filtered_chunk)
-
-            # Build the full dataframe
-            return pd.concat(dataframes)
-
-        parsed_rrd = pd.read_csv(rrd_path + '/parsed/snmp_parsed_data.csv')
-    return parsed_rrd[parsed_rrd['server'].isin(servers)]
-
-def generate_snmp_plots(
-    value_dict:dict,
-    plot_path:str,
-    dir_name:str
-    ):
-    """_summary_
-
-    Args:
-        value_dict (dict): _description_
-        plot_path (str): _description_
-        dir_name (str): _description_
-    """
-    dir_plot_path = os.path.join(plot_path, dir_name)
-
-    if not os.path.exists(dir_plot_path):
-        os.mkdir(dir_plot_path)
-
-    for key, values in value_dict.items():
-        title = dir_name + ": " + ''.join(key.split('.')[:-1])
-        file_path = os.path.join(dir_plot_path, ''.join(key.split('.')[:-1]))
-
-        plt.plot(values)
-        plt.title(title)
-        plt.savefig(file_path)
