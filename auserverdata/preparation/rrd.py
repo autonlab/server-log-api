@@ -8,7 +8,6 @@ import datetime as dt
 import rrdtool
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from joblib import Parallel,delayed
 import pyarrow.parquet as pq
 
@@ -258,7 +257,7 @@ def get_available_snmp_server_names(
 def get_available_component_names_for_collectd_server(
     rrd_dir:str,
     collectd_server:str
-    )->np.array:
+    )->list[str]:
     """Retrieves the names of available components for a collectd server.
 
     Args:
@@ -266,7 +265,7 @@ def get_available_component_names_for_collectd_server(
         server (str): The name of the collectd server that the data should be retrieved from.
 
     Returns:
-        np.array: An array containing the available components for the collectd server.
+        list[str]: An array containing the available components for the collectd server.
     """
     condition = ('server','=',collectd_server)
     parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', filters=[condition], columns=['component']).to_pandas()
@@ -276,7 +275,7 @@ def get_available_rrd_names_for_collectd_server_component(
     rrd_dir:str,
     collectd_server:str,
     component:str
-    )->np.array:
+    )->list[str]:
     """Retrieves the names of available RRDs for a collectd server's component.
 
     Args:
@@ -285,7 +284,7 @@ def get_available_rrd_names_for_collectd_server_component(
         component (str): The name of the server's component that the data should be retrieved from.
 
     Returns:
-        np.array: An array containing the available RRDs for the collectd server's component.
+        list[str]: An array containing the available RRDs for the collectd server's component.
     """
     condition = [('server','=',collectd_server),('component','=',component)]
     parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', filters=[condition], columns=['rrd']).to_pandas()
@@ -294,7 +293,7 @@ def get_available_rrd_names_for_collectd_server_component(
 def get_available_rrd_names_for_snmp_server(
     rrd_dir:str,
     snmp_server:str
-    )->np.array:
+    )->list[str]:
     """Retrieves the names of available RRDs for an snmp server.
 
     Args:
@@ -302,7 +301,7 @@ def get_available_rrd_names_for_snmp_server(
         snmp_server (str): The name of the server that the data should be retrieved from.
 
     Returns:
-        np.array: An array containing the available RRDs for the server.
+        list[str]: An array containing the available RRDs for the server.
     """
     condition = ('server','=',snmp_server)
     parsed_rrd = pq.read_table(rrd_dir + '/parsed/snmp/parsed_data.parquet', filters=[condition], columns=['rrd']).to_pandas()
