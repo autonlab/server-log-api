@@ -307,9 +307,9 @@ def get_available_rrd_names_for_snmp_server(
     parsed_rrd = pq.read_table(rrd_dir + '/parsed/snmp/parsed_data.parquet', filters=[condition], columns=['rrd']).to_pandas()
     return parsed_rrd['rrd'].unique()
 
-def get_time_series_data_for_collectd_server(
+def get_time_series_data_for_collectd_servers(
     rrd_dir:str,
-    collectd_server:str
+    collectd_servers:list[str]
     )->pd.DataFrame:
     """Builds a dataframe of time series data where
        indices are timestamps and columns are
@@ -324,12 +324,14 @@ def get_time_series_data_for_collectd_server(
                       indices are timestamps and columns are
                       the data sources contained in the collectd server's RRDs.
     """
-    condition = ('server','=',collectd_server)
-    parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', filters=[condition], columns=['component','rrd','data_source','time','value']).to_pandas()
-    parsed_rrd = parsed_rrd.pivot(index='time', columns=['component','rrd','data_source'], values='value')
+    conditions = []
+    for collectd_server in collectd_servers:
+        conditions.append([('server', '==', collectd_server)])
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/collectd/parsed_data.parquet', filters=conditions, columns=['server', 'component','rrd','data_source','time','value']).to_pandas()
+    parsed_rrd = parsed_rrd.pivot(index='time', columns=['server','component','rrd','data_source'], values='value')
     return parsed_rrd
 
-def get_time_series_data_for_snmp_server(
+def get_time_series_data_for_snmp_servers(
     rrd_dir:str,
     snmp_server:str
     )->pd.DataFrame:
@@ -346,9 +348,11 @@ def get_time_series_data_for_snmp_server(
                       indices are timestamps and columns are
                       the data sources contained in the RRD.
     """
-    condition = ('server','=',snmp_server)
-    parsed_rrd = pq.read_table(rrd_dir + '/parsed/snmp/parsed_data.parquet', filters=[condition], columns=['rrd', 'data_source', 'time', 'value']).to_pandas()
-    parsed_rrd = parsed_rrd.pivot(index='time', columns=['rrd', 'data_source'], values='value')
+    conditions = []
+    for snmp_server in snmp_servers:
+        conditions.append([('server', '==', snmp_server)])
+    parsed_rrd = pq.read_table(rrd_dir + '/parsed/snmp/parsed_data.parquet', filters=conditions, columns=['server', 'rrd', 'data_source', 'time', 'value']).to_pandas()
+    parsed_rrd = parsed_rrd.pivot(index='time', columns=['server', 'rrd', 'data_source'], values='value')
     return parsed_rrd
 
 def get_time_series_data_for_single_collectd_rrd(
@@ -418,7 +422,7 @@ def get_collectd_features_with_matching_timestamps(
                                 a dataframe containing features that share timestamps.
     """
     # Get the time series data for the snmp server
-    collectd_ts_df = get_time_series_data_for_collectd_server(rrd_dir=rrd_dir, collectd_server=collectd_server)
+    collectd_ts_df = get_time_series_data_for_collectd_servers(rrd_dir=rrd_dir, collectd_servers=[collectd_server])
     # Count the number of non-nan values per row/timestamp
     # We will find that the unique numbers of non-nan values per timestamp
     # is discrete. This means that some features share the timestamps.
@@ -459,7 +463,7 @@ def get_snmp_features_with_matching_timestamps(
                                 a dataframe containing features that share timestamps.
     """
     # Get the time series data for the snmp server
-    snmp_ts_df = get_time_series_data_for_snmp_server(rrd_dir=rrd_dir, snmp_server=snmp_server)
+    snmp_ts_df = get_time_series_data_for_snmp_servers(rrd_dir=rrd_dir, snmp_servers=[snmp_server])
     # Count the number of non-nan values per row/timestamp
     # We will find that the unique numbers of non-nan values per timestamp
     # is discrete. This means that some features share the timestamps.
@@ -473,7 +477,7 @@ def get_snmp_features_with_matching_timestamps(
     # Create a dictionary that maps the unique counts of non-nan values
     # to a dataframe containing the features sharing timestamps.
     # For example, if there are 20 timestamps with 250 non-nan values,
-    # then we will have a key = 250 that maps to a dictionary
+    # then we will have a key = 250 that maps to a dataframe
     # that has 20 timestamps and columns being the features that share
     # those timestamps.
     features_df_per_non_nan_value_count = {}
@@ -482,6 +486,18 @@ def get_snmp_features_with_matching_timestamps(
         features_df_per_non_nan_value_count[idx] = feature_df.dropna(axis=1,how='all')
 
     return features_df_per_non_nan_value_count
+
+def get_unique_component_rrd_pairs_from_features_with_matching_timestamps(features_with_matching_timestamps):
+    component_rrd_df = pd.DataFrame(
+        pd.Series(
+            features_with_matching_timestamps.columns.droplevel(['data_source', 'server']).unique().to_numpy()
+            ).apply(lambda x: pd.Series(x))
+        )
+    component_rrd_df.columns = ['component', 'rrd']
+    return component_rrd_df
+
+def get_sorted_value_counts_of_unique_component_rrd_pairs(component_rrd_df):
+    return component_rrd_df['component'].value_counts().sort_index()
 
 def get_number_of_features_for_each_collectd_server(
     rrd_dir:str
