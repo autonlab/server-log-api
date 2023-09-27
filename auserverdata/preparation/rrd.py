@@ -405,88 +405,6 @@ def get_time_series_data_for_single_snmp_rrd(
     parsed_rrd = parsed_rrd.pivot(index='time', columns=['rrd', 'data_source'], values='value')
     return parsed_rrd
 
-def get_collectd_features_with_matching_timestamps(
-    rrd_dir:str,
-    collectd_server:str
-    )->dict[int,pd.DataFrame]:
-    """Builds a dictionary mapping unique counts of non-nan values to
-       a dataframe containing features that share timestamps. All data is retrieved
-       for a single collectd server.
-
-    Args:
-        rrd_dir (str): The path to the rrd directoy.
-        collectd_server (str): The name of the collectd server that the data should be retrieved from.
-
-    Returns:
-        dict[int,pd.DataFrame]: A dictionary mapping unique counts of non-nan values to
-                                a dataframe containing features that share timestamps.
-    """
-    # Get the time series data for the snmp server
-    collectd_ts_df = get_time_series_data_for_collectd_servers(rrd_dir=rrd_dir, collectd_servers=[collectd_server])
-    # Count the number of non-nan values per row/timestamp
-    # We will find that the unique numbers of non-nan values per timestamp
-    # is discrete. This means that some features share the timestamps.
-    # For example, if there are 20 timestamps with 250 non-nan values,
-    # then that means there are 250 features that share 20 timestamps.
-    non_nan_value_count_per_timestamp = collectd_ts_df.count(axis=1)
-    # Get the number of timestamps per unique count of non-nan values.
-    # For example, if there are 20 timestamps with 250 non-nan values,
-    # then we will get 250 mapped to 20.
-    value_counts = non_nan_value_count_per_timestamp.value_counts()
-    # Create a dictionary that maps the unique counts of non-nan values
-    # to a dataframe containing the features sharing timestamps.
-    # For example, if there are 20 timestamps with 250 non-nan values,
-    # then we will have a key = 250 that maps to a dictionary
-    # that has 20 timestamps and columns being the features that share
-    # those timestamps.
-    features_df_per_non_nan_value_count = {}
-    for idx in value_counts.index:
-        feature_df = collectd_ts_df.loc[non_nan_value_count_per_timestamp[non_nan_value_count_per_timestamp == idx].index]
-        features_df_per_non_nan_value_count[idx] = feature_df.dropna(axis=1,how='all')
-
-    return features_df_per_non_nan_value_count
-
-def get_snmp_features_with_matching_timestamps(
-    rrd_dir:str,
-    snmp_server:str
-    )->dict[int,pd.DataFrame]:
-    """Builds a dictionary mapping unique counts of non-nan values to
-       a dataframe containing features that share timestamps. All data is retrieved
-       for a single snmp server.
-
-    Args:
-        rrd_dir (str): The path to the rrd directoy.
-        snmp_server (str): The name of the snmp server that the data should be retrieved from.
-
-    Returns:
-        dict[int,pd.DataFrame]: A dictionary mapping unique counts of non-nan values to
-                                a dataframe containing features that share timestamps.
-    """
-    # Get the time series data for the snmp server
-    snmp_ts_df = get_time_series_data_for_snmp_servers(rrd_dir=rrd_dir, snmp_servers=[snmp_server])
-    # Count the number of non-nan values per row/timestamp
-    # We will find that the unique numbers of non-nan values per timestamp
-    # is discrete. This means that some features share the timestamps.
-    # For example, if there are 20 timestamps with 250 non-nan values,
-    # then that means there are 250 features that share 20 timestamps.
-    non_nan_value_count_per_timestamp = snmp_ts_df.count(axis=1)
-    # Get the number of timestamps per unique count of non-nan values.
-    # For example, if there are 20 timestamps with 250 non-nan values,
-    # then we will get 250 mapped to 20.
-    value_counts = non_nan_value_count_per_timestamp.value_counts()
-    # Create a dictionary that maps the unique counts of non-nan values
-    # to a dataframe containing the features sharing timestamps.
-    # For example, if there are 20 timestamps with 250 non-nan values,
-    # then we will have a key = 250 that maps to a dataframe
-    # that has 20 timestamps and columns being the features that share
-    # those timestamps.
-    features_df_per_non_nan_value_count = {}
-    for idx in value_counts.index:
-        feature_df = snmp_ts_df.loc[non_nan_value_count_per_timestamp[non_nan_value_count_per_timestamp == idx].index]
-        features_df_per_non_nan_value_count[idx] = feature_df.dropna(axis=1,how='all')
-
-    return features_df_per_non_nan_value_count
-
 def get_unique_component_rrd_pairs_from_features_with_matching_timestamps(features_with_matching_timestamps):
     component_rrd_df = pd.DataFrame(
         pd.Series(
@@ -546,3 +464,40 @@ def get_number_of_features_for_each_snmp_server(
     n_features_per_server_df = pd.DataFrame.from_dict(n_features_per_server, orient='index', columns=['n_features'])
     n_features_per_server_df.to_csv(rrd_dir + '/parsed/snmp/n_features_per_server.csv')
     return n_features_per_server_df
+
+def map_features_to_timestamps(feature_df):
+    timestamps_per_feature = {}
+    # Iterate through each feature
+    for feature_name in feature_df.columns:
+        feature = feature_df[feature_name]
+        # Get the timestamps/indices where the feature has non-nan values
+        non_nan_timestamps = feature.index[~feature.isna()].tolist()
+        timestamps_per_feature[feature_name] = non_nan_timestamps
+    return timestamps_per_feature
+
+def map_timestamp_set_to_features(timestamps_per_feature):
+    features_per_timestamp_set = {}
+    # Iterate through the timestamps_per_feature dictionary
+    for feature_name, timestamp_list in timestamps_per_feature.items():
+        # Convert the feature_list to a tuple to make it hashable (lists are not hashable)
+        timestamp_tuple = tuple(timestamp_list)
+
+        # Check if the timestamp set is in the dictionary yet
+        if timestamp_tuple in features_per_timestamp_set:
+            features_per_timestamp_set[timestamp_tuple].append(feature_name)
+        else:
+            features_per_timestamp_set[timestamp_tuple] = [feature_name]
+
+    return features_per_timestamp_set
+
+def print_timestamp_set_to_features_map_info(feature_names_per_list_of_timestamps):
+    print('*' * 60)
+    for i,(k,v) in enumerate(feature_names_per_list_of_timestamps.items()):
+        print(f'Info about Timestamp Set {i}')
+        print(f'    Number of timestamps: {len(list(k))}')
+        print(f'    Number of features with the these timestamps: {len(v)}')
+        print(f'    Step size between timestamps: {pd.Timestamp(k[1]) - pd.Timestamp(k[0])}')
+        print(f'    Start timestamp: {k[0]}')
+        print(f'    End timestamp: {k[-1]}')
+        print(f'    Total duration: {pd.Timestamp(k[-1]) - pd.Timestamp(k[0])}')
+        print('*' * 60)
