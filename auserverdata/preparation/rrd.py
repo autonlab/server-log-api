@@ -465,7 +465,7 @@ def get_number_of_features_for_each_snmp_server(
     n_features_per_server_df.to_csv(rrd_dir + '/parsed/snmp/n_features_per_server.csv')
     return n_features_per_server_df
 
-def map_features_to_timestamps(feature_df):
+def map_feature_names_to_timestamps(feature_df):
     timestamps_per_feature = {}
     # Iterate through each feature
     for feature_name in feature_df.columns:
@@ -475,7 +475,7 @@ def map_features_to_timestamps(feature_df):
         timestamps_per_feature[feature_name] = non_nan_timestamps
     return timestamps_per_feature
 
-def map_timestamp_set_to_features(timestamps_per_feature):
+def map_timestamp_sets_to_feature_names(timestamps_per_feature):
     features_per_timestamp_set = {}
     # Iterate through the timestamps_per_feature dictionary
     for feature_name, timestamp_list in timestamps_per_feature.items():
@@ -490,7 +490,7 @@ def map_timestamp_set_to_features(timestamps_per_feature):
 
     return features_per_timestamp_set
 
-def print_timestamp_set_to_features_map_info(feature_names_per_list_of_timestamps):
+def print_timestamp_set_to_feature_names_map_info(feature_names_per_list_of_timestamps):
     print('*' * 60)
     for i,(k,v) in enumerate(feature_names_per_list_of_timestamps.items()):
         print(f'Info about Timestamp Set {i}')
@@ -501,3 +501,15 @@ def print_timestamp_set_to_features_map_info(feature_names_per_list_of_timestamp
         print(f'    End timestamp: {k[-1]}')
         print(f'    Total duration: {pd.Timestamp(k[-1]) - pd.Timestamp(k[0])}')
         print('*' * 60)
+
+def get_feature_names_for_timestamp_set(
+    features_per_timestamp_set:dict,
+    timestamp_set:int
+    ):
+    return list(features_per_timestamp_set.values())[timestamp_set]
+
+def get_feature_names_with_substring_present(
+    feature_names:list[tuple[str]],
+    substring:str
+    ):
+    return list({x for x in feature_names if substring in ''.join(x)})
