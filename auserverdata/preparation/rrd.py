@@ -3,6 +3,7 @@ Lorem
 """
 import os
 import sys
+import re
 from pathlib import Path
 import datetime as dt
 import rrdtool
@@ -10,6 +11,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel,delayed
 import pyarrow.parquet as pq
+import warnings
 
 def get_data_from_rrd(
     rrd:str,
@@ -513,3 +515,71 @@ def get_feature_names_with_substring_present(
     substring:str
     ):
     return list({x for x in feature_names if substring in ''.join(x)})
+
+def get_available_cpus_for_single_server(
+    rrd_dir:str,
+    server:str=None,
+    column_names:list[str]=None
+    )->list[str]:
+
+    assert (server is not None) or (column_names is not None), 'Neither server or column_names was provided. One of these must be provided.'
+
+    if server is not None:
+        collectd_ts_df = get_time_series_data_for_collectd_servers(rrd_dir=rrd_dir, collectd_servers=[server])
+        collectd_ts_df.columns = ['/'.join(col) for col in collectd_ts_df.columns]
+        column_names = collectd_ts_df.columns
+
+    # Set to store unique substrings
+    unique_cpus = set()
+
+    # Regular expression pattern to match "cpu-k" substrings
+    pattern = re.compile(r'cpu-\d+')
+
+    # Extracting unique "cpu-k" substrings
+    for column in column_names:
+        matches = pattern.findall(column)
+        unique_cpus.update(matches)
+
+    # Convert the set to a list (if needed)
+    available_cpu_list = sorted(list(unique_cpus))
+    return sorted(available_cpu_list)
+
+def aggregate_single_cpu_channels_for_server(
+    server:str,
+    channel_name:str,
+    rrd_dir:str,
+    maintain_timestamps:bool
+    )->tuple[list[pd.Series], list[int]]:
+
+    collectd_ts_df = get_time_series_data_for_collectd_servers(rrd_dir=rrd_dir, collectd_servers=[server])
+    if not maintain_timestamps:
+        collectd_ts_df.index = [x for x in range(len(collectd_ts_df))]
+    collectd_ts_df.columns = ['/'.join(col) for col in collectd_ts_df.columns]
+    available_cpu_list = get_available_cpus_for_single_server(column_names=collectd_ts_df.columns, rrd_dir=rrd_dir)
+    stacked_single_cpu_channel_list = []
+    channel_length_list = []
+    for cpu in available_cpu_list:
+        channel = collectd_ts_df.loc[:,f'{server}/{cpu}/{channel_name}'].dropna()
+        channel_length = len(channel)
+        stacked_single_cpu_channel_list.append(collectd_ts_df.loc[:,f'{server}/{cpu}/{channel_name}'].dropna())
+        channel_length_list.append(channel_length)
+    return stacked_single_cpu_channel_list, channel_length_list
+
+def check_if_list_contains_single_value(l:list)->bool:
+    return len(np.unique(l)) == 1
+
+def build_horizontal_and_vertical_cpu_channel_dfs(
+    stacked_single_cpu_channels_list:list[pd.Series],
+    channel_length_list:list[int],
+    channel_name:str
+    )->tuple[pd.DataFrame, pd.DataFrame]:
+
+    if check_if_list_contains_single_value(channel_length_list):
+        horizontal_cpu_channel_df = pd.concat(stacked_single_cpu_channels_list, axis=1).reset_index(drop=True)
+    else:
+        horizontal_cpu_channel_df = None
+        warnings.warn('Warning: The lengths of each channel do not match so they cannot be concatenated horizontally.')
+    vertical_cpu_channel_df = pd.concat(stacked_single_cpu_channels_list, axis=0).reset_index(drop=True).to_frame()
+    vertical_cpu_channel_df.columns = [channel_name]
+
+    return horizontal_cpu_channel_df, vertical_cpu_channel_df
