@@ -28,7 +28,8 @@ def plot_time_series_data_on_single_plot(
 
 def plot_stacked_single_channel_data_on_single_plot(
     stacked_data_list:list[pd.Series],
-    channel_name:str
+    channel_name:str,
+    normalize:bool
     ):
     fig, ax = plt.subplots(figsize=(18,6))
     timesteps_for_vlines = []
@@ -40,14 +41,18 @@ def plot_stacked_single_channel_data_on_single_plot(
     data = pd.concat(stacked_data_list)
     data.index = [x for x in range(len(data))]
     data = data.dropna()
-    min_value = data.min()
-    max_value = data.max()
-    data = (data - min_value) / (max_value - min_value)
+    if normalize:
+        min_value = data.min()
+        max_value = data.max()
+        data = (data - min_value) / (max_value - min_value)
+        plt.ylabel(f'{channel_name} [Normalized]')
+    else:
+        plt.ylabel(f'{channel_name}')
     min_value = data.min()
     max_value = data.max()
     plt.plot(data.index, data);
     plt.legend(loc = 'center left', bbox_to_anchor =  (1, 0.5))
-    plt.ylabel(f'{channel_name} [Normalized]')
+
     plt.xlabel('Timestep [10s Steps]')
 
     for timestep in timesteps_for_vlines:
