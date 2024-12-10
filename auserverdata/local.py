@@ -8,6 +8,7 @@ class LocalConfig:
 class BradLisaLocalConfig(LocalConfig):
     def __init__(self):
         self.rrd_dir = '/home/bshook/Projects/server-log-api/rrd'
+        self.figures_dir = '/home/bshook/Projects/server-log-api/figures'
 
 def get_local_config():
     username = os.getlogin()
