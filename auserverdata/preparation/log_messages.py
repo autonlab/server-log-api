@@ -9,7 +9,7 @@ import pandas as pd
 from tqdm import tqdm
 
 def determine_available_data(
-    src = Path(__file__).parent / 'data',
+    src: Path,
     dst: Path = 'available_log_messages.csv'
     ):
     """Writes to local directory a csv enumerating possible log message data from which to draw from.
@@ -76,13 +76,13 @@ def parse_all(
         # Check if the file needs to be gzip'd
         if (file_path.endswith('.gz')):
             file_path = file_path[:-3]
-            os.system('gzip -d {path}')
+            os.system(f'gzip -d {file_path}')
 
         # Open the log message file
         log_message_file = open(file_path, 'r')
         try:
             log_messages = log_message_file.read()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             log_message_file.close()
             del log_message_file
             continue
